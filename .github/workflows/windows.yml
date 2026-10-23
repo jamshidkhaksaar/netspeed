@@ -1,0 +1,87 @@
+name: Windows build and installers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up installer build runtime
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run Rust regression tests
+        shell: pwsh
+        run: cargo test --locked
+
+      - name: Run isolated PowerShell installer tests
+        shell: pwsh
+        run: pwsh -NoProfile -File .\tests\install.Tests.ps1
+
+      - name: Build native application and resources
+        shell: pwsh
+        run: cargo build --release --locked --target-dir target\release-package
+
+      - name: Verify embedded icon, version and manifest
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -eq 'netspeed').version
+          python -B scripts\verify_windows_resources.py target\release-package\release\netspeed.exe --version $version
+
+      - name: Set up pinned WiX tools
+        shell: pwsh
+        run: |
+          dotnet tool install wix --version 4.0.6 --tool-path .tools\wix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.tools\wix\wix.exe extension add WixToolset.UI.wixext/4.0.6
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.tools\wix\wix.exe extension add WixToolset.Bal.wixext/4.0.6
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build MSI and native EXE installer
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -eq 'netspeed').version
+          $appExe = (Resolve-Path .\target\release-package\release\netspeed.exe).Path
+          & .\packaging\build-installers.ps1 -Version $version -AppExe $appExe
+
+      - name: Validate packages without installation
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = ($metadata.packages | Where-Object name -eq 'netspeed').version
+          & .\packaging\validate-installers.ps1 -Version $version -OutputDir (Join-Path .\dist ('v' + $version))
+
+      - name: Upload versioned installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: netspeed-windows-x64
+          path: |
+            dist/v*/netspeed.exe
+            dist/v*/NetSpeed-*-x64.msi
+            dist/v*/NetSpeed-*-Setup.exe
+            dist/v*/SHA256SUMS.txt
+          if-no-files-found: error

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">NetSpeed application icon</title>
+  <desc id="description">A green download arrow and a cyan upload arrow on a dark-blue badge.</desc>
+  <!-- Original geometric artwork. The 16-unit grid keeps each arrow shaft two pixels wide at tray size. -->
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#294A65"/>
+  <rect x="16" y="16" width="224" height="224" rx="40" fill="#132B43"/>
+  <polygon points="64,64 96,64 96,136 120,136 80,192 40,136 64,136" fill="#6CCB5F"/>
+  <polygon points="176,64 216,120 192,120 192,192 160,192 160,120 136,120" fill="#60CDFF"/>
+</svg>

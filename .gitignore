@@ -1,1 +1,6 @@
-/target
+/target/
+/dist/
+/.tools/
+/.wix/
+/packaging/.wix/
+/tests/.isolated-*/

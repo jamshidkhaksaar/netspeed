@@ -1,6 +1,6 @@
 [package]
 name = "netspeed"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Taskbar network speed widget for Windows 11 - native Rust, Direct2D, no Electron"
 license = "MIT"

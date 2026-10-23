@@ -8,14 +8,15 @@ mod format;
 mod log;
 mod net;
 mod overlay;
+mod sampling;
+mod startup;
 mod theme;
 mod tray;
 mod util;
 
 use std::sync::atomic::{AtomicPtr, Ordering};
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+    ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -23,15 +24,23 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::NIN_SELECT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HICON,
-    LoadCursorW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, TranslateMessage, MSG,
-    WNDCLASSW, WNDCLASS_STYLES, WS_EX_TOOLWINDOW, WS_POPUP, IDC_ARROW, WM_CONTEXTMENU, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_POWERBROADCAST, WM_RBUTTONUP, WM_SETTINGCHANGE,
-    WM_THEMECHANGED, WM_TIMER,
+    IDC_ARROW, LoadCursorW, LoadIconW, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMECRITICAL,
+    PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    TranslateMessage, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONUP,
+    WM_POWERBROADCAST, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASS_STYLES,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
+use windows::core::{PCWSTR, w};
 
 pub static APP: AtomicPtr<app::App> = AtomicPtr::new(std::ptr::null_mut());
 pub const TIMER_ID: usize = 1;
 pub const TRAY_CALLBACK_MSG: u32 = 0x8001;
+pub const APP_ICON_RESOURCE_ID: u16 = 1;
+
+fn app_icon_resource_name() -> PCWSTR {
+    // MAKEINTRESOURCEW: this is an integer resource ID, not a string pointer.
+    PCWSTR(APP_ICON_RESOURCE_ID as usize as *const u16)
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,13 +65,19 @@ fn main() {
         let hmodule = GetModuleHandleW(PCWSTR::null()).unwrap_or_default();
         let inst = HINSTANCE(hmodule.0);
         let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
+        // LoadIconW returns a shared module handle. Both classes can retain it
+        // for their lifetime; it must not be destroyed by tray icon cleanup.
+        let class_icon = LoadIconW(Some(inst), app_icon_resource_name()).unwrap_or_else(|error| {
+            util::log_error(&format!("cannot load NetSpeed class icon: {error}"));
+            HICON::default()
+        });
         let wc_tray = WNDCLASSW {
             style: WNDCLASS_STYLES(0),
             lpfnWndProc: Some(wndproc),
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: inst,
-            hIcon: HICON::default(),
+            hIcon: class_icon,
             hCursor: cursor,
             hbrBackground: HBRUSH::default(),
             lpszMenuName: PCWSTR::null(),
@@ -75,7 +90,7 @@ fn main() {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: inst,
-            hIcon: HICON::default(),
+            hIcon: class_icon,
             hCursor: cursor,
             hbrBackground: HBRUSH::default(),
             lpszMenuName: PCWSTR::null(),
@@ -139,12 +154,14 @@ fn app_ref<'a>() -> Option<&'a mut app::App> {
     }
 }
 
-unsafe extern "system" fn wndproc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+fn resets_sampling_for_power_event(event: u32) -> bool {
+    matches!(
+        event,
+        PBT_APMSUSPEND | PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND | PBT_APMRESUMECRITICAL
+    )
+}
+
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let Some(a) = app_ref() else {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     };
@@ -178,13 +195,15 @@ unsafe extern "system" fn wndproc(
             a.on_taskbar_created();
             LRESULT(0)
         }
-        WM_SETTINGCHANGE | WM_DISPLAYCHANGE | WM_THEMECHANGED => {
+        WM_SETTINGCHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED | WM_THEMECHANGED => {
             a.on_display_change();
             LRESULT(0)
         }
         WM_POWERBROADCAST => {
-            a.on_resume();
-            LRESULT(0)
+            if resets_sampling_for_power_event(wparam.0 as u32) {
+                a.on_resume();
+            }
+            LRESULT(1)
         }
         WM_DESTROY => {
             PostQuitMessage(0);
@@ -204,40 +223,67 @@ fn net_debug() {
         );
     }
     println!("best route index: {:?}", net::best_route_index());
-    let mut prev: Option<(u64, u64, std::time::Instant)> = None;
+    // Use the widget's selection and sampling logic so diagnostics reflect it.
+    let mut sampler = sampling::Sampler::default();
     for _ in 0..4 {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let rows = net::list_adapters();
-        let best = net::best_route_index()
-            .and_then(|i| rows.iter().find(|r| r.index == i).cloned())
-            .or_else(|| {
-                rows.iter()
-                    .filter(|r| r.up && r.is_physical_like())
-                    .max_by_key(|r| r.link_bps)
-                    .cloned()
-            });
+        let best = net::pick_adapter(&rows, None, net::best_route_index());
         if let Some(r) = best {
-            let now = std::time::Instant::now();
-            if let Some((pi, po, pt)) = prev {
-                let dt = now.duration_since(pt).as_secs_f64();
-                if dt > 0.0 && r.in_octets >= pi && r.out_octets >= po {
-                    println!(
-                        "  {}: down {} up {}",
-                        r.alias,
-                        format::format_rate(
-                            (r.in_octets - pi) as f64 / dt,
-                            config::Units::BytesBin,
-                            1
-                        ),
-                        format::format_rate(
-                            (r.out_octets - po) as f64 / dt,
-                            config::Units::BytesBin,
-                            1
-                        )
-                    );
-                }
+            if sampler.update(
+                r.luid,
+                r.in_octets,
+                r.out_octets,
+                std::time::Instant::now(),
+                500,
+            ) {
+                println!(
+                    "  {}: down {} up {}",
+                    r.alias,
+                    format::format_rate(sampler.down, config::Units::BytesBin, 1),
+                    format::format_rate(sampler.up, config::Units::BytesBin, 1),
+                );
             }
-            prev = Some((r.in_octets, r.out_octets, now));
+        } else {
+            sampler.reset();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        PBT_APMBATTERYLOW, PBT_APMPOWERSTATUSCHANGE, PBT_APMQUERYSUSPEND,
+    };
+
+    #[test]
+    fn application_icon_uses_integer_resource_one() {
+        assert_eq!(APP_ICON_RESOURCE_ID, 1);
+        assert_eq!(app_icon_resource_name().0 as usize, 1);
+    }
+
+    #[test]
+    fn suspend_and_resume_events_reset_sampling() {
+        for event in [
+            PBT_APMSUSPEND,
+            PBT_APMRESUMEAUTOMATIC,
+            PBT_APMRESUMESUSPEND,
+            PBT_APMRESUMECRITICAL,
+        ] {
+            assert!(resets_sampling_for_power_event(event));
+        }
+    }
+
+    #[test]
+    fn routine_power_notifications_do_not_reset_sampling() {
+        for event in [
+            PBT_APMPOWERSTATUSCHANGE,
+            PBT_APMBATTERYLOW,
+            PBT_APMQUERYSUSPEND,
+            u32::MAX,
+        ] {
+            assert!(!resets_sampling_for_power_event(event));
         }
     }
 }

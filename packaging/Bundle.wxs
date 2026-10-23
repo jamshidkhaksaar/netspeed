@@ -1,0 +1,56 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <!-- WiX 4 infers per-user bundle scope from the per-user MSI chain.
+       Do not add a WiX 3 PerMachine attribute or a managed BA host. -->
+  <Bundle Name="NetSpeed"
+          Manufacturer="NetSpeed"
+          Version="$(var.Version)"
+          UpgradeCode="7F7B4573-E88E-5EF3-A69D-4406C9D9125A"
+          Compressed="yes"
+          IconSourceFile="$(var.IconFile)"
+          Copyright="Copyright (c) 2026 Jamshid Khaksaar"
+          AboutUrl="https://github.com/jamshidkhaksaar/netspeed"
+          HelpUrl="https://github.com/jamshidkhaksaar/netspeed/issues"
+          DisableModify="no"
+          DisableRemove="no">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="rtfLargeLicense"
+                                              LicenseFile="$(var.LicenseRtf)"
+                                              LogoFile="$(var.LogoFile)"
+                                              ShowVersion="yes"
+                                              SuppressOptionsUI="yes"
+                                              SuppressRepair="no"
+                                              SuppressDowngradeFailure="no" />
+      <Payload Id="NetSpeedMitLicense" Name="LICENSE.txt" SourceFile="$(var.LicenseFile)" />
+      <Payload Id="NetSpeedThirdPartyNotice" Name="THIRD-PARTY-NOTICES.txt" SourceFile="$(var.NoticesFile)" />
+    </BootstrapperApplication>
+
+    <!-- All three OS variables below exist in the pinned WiX 4.0.6 Burn
+         engine. VersionNT contains only major/minor, NOT the build number.
+         34404 is IMAGE_FILE_MACHINE_AMD64 (0x8664), not ARM64. Let an already
+         installed bundle be removed/repaired after an OS change. -->
+    <bal:Condition Condition="WixBundleInstalled OR (VersionNT64 AND NativeMachine = 34404 AND NTProductType = 1 AND WindowsBuildNumber &gt;= 22000)"
+                   Message="NetSpeed requires Windows 11 on an x64 PC (build 22000 or later). Windows 10, Windows Server and ARM64 are not supported by this installer." />
+
+    <!-- The installed MSI is hidden only when managed by this bundle so
+         Programs and Features presents one NetSpeed entry. The standalone
+         MSI remains visible. Burn caches the embedded MSI for maintenance. -->
+    <Chain>
+      <MsiPackage Id="NetSpeedMsi"
+                  SourceFile="$(var.MsiFile)"
+                  Name="NetSpeed-$(var.Version)-x64.msi"
+                  DisplayName="NetSpeed"
+                  Compressed="yes"
+                  Cache="keep"
+                  Visible="no"
+                  Vital="yes"
+                  Permanent="no"
+                  ForcePerMachine="no"
+                  bal:DisplayInternalUICondition="0">
+        <MsiProperty Name="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+        <MsiProperty Name="MSIDISABLERMRESTART" Value="1" />
+      </MsiPackage>
+    </Chain>
+    <!-- No runtime prerequisite, ExePackage, launch target or CloseApplication. -->
+  </Bundle>
+</Wix>

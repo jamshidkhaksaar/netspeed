@@ -4,20 +4,16 @@ use crate::format;
 use crate::log::Logger;
 use crate::net::{self, AdapterRow};
 use crate::overlay::Overlay;
-use crate::theme;
+use crate::sampling::Sampler;
 use crate::tray::{self, Tray};
+use crate::{startup, theme};
 use std::time::{Duration, Instant};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{ERROR_SUCCESS, HWND};
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-    KEY_SET_VALUE, REG_SZ,
-};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::{KillTimer, SetTimer};
-
-const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const RUN_VALUE: &str = "NetSpeed";
+use windows::Win32::UI::WindowsAndMessaging::{
+    KillTimer, MB_ICONERROR, MB_OK, MessageBoxW, PostQuitMessage, SetTimer,
+};
+use windows::core::{PCWSTR, w};
 
 pub struct App {
     pub cfg: Config,
@@ -28,14 +24,8 @@ pub struct App {
     paused: bool,
     adapters: Vec<AdapterRow>,
     selected_name: String,
-    prev_in: u64,
-    prev_out: u64,
-    reset_pending: bool,
-    last_sample: Instant,
-    tot_in: u64,
-    tot_out: u64,
-    rate_down: f64,
-    rate_up: f64,
+    sampling: Sampler,
+    sample_valid: bool,
     last_text: Option<(String, String)>,
     logger: Option<Logger>,
     logger_at: Instant,
@@ -59,14 +49,8 @@ impl App {
             paused: false,
             adapters: Vec::new(),
             selected_name: String::from("--"),
-            prev_in: 0,
-            prev_out: 0,
-            reset_pending: true,
-            last_sample: now,
-            tot_in: 0,
-            tot_out: 0,
-            rate_down: 0.0,
-            rate_up: 0.0,
+            sampling: Sampler::default(),
+            sample_valid: false,
             last_text: None,
             logger: None,
             logger_at: now,
@@ -80,32 +64,37 @@ impl App {
     }
 
     pub fn init(&mut self) {
-        set_autostart(self.cfg.autostart);
+        self.refresh_autostart();
         self.tray.add_icon();
         self.tick();
     }
 
+    fn refresh_autostart(&mut self) {
+        match startup::is_enabled() {
+            Ok(enabled) => self.cfg.autostart = enabled,
+            Err(e) => crate::util::log_error(&format!("cannot read Windows startup state: {e}")),
+        }
+    }
+
     pub fn start_timer(&self) {
         unsafe {
-            SetTimer(
+            if SetTimer(
                 Some(self.tray.hwnd),
                 crate::TIMER_ID,
                 self.cfg.interval_clamped(),
                 None,
-            );
+            ) == 0
+            {
+                crate::util::log_error("SetTimer failed; widget cannot update");
+            }
         }
     }
 
     fn reset_timer(&self) {
         unsafe {
             let _ = KillTimer(Some(self.tray.hwnd), crate::TIMER_ID);
-            SetTimer(
-                Some(self.tray.hwnd),
-                crate::TIMER_ID,
-                self.cfg.interval_clamped(),
-                None,
-            );
         }
+        self.start_timer();
     }
 
     pub fn tray_hwnd(&self) -> HWND {
@@ -117,7 +106,10 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        // Retry if Explorer wasn't ready during logon or temporarily lost the icon.
+        self.tray.ensure_added();
         let Some(tb) = anchor::find_taskbar() else {
+            self.reset_sampling();
             return;
         };
         if self.taskbar_hwnd != tb.hwnd {
@@ -155,11 +147,19 @@ impl App {
         if self.snap_path.is_some() {
             self.snap_ticks += 1;
             if self.snap_ticks >= 3 {
-                let p = self.snap_path.clone().unwrap_or_default();
-                if let Some(o) = &self.overlay {
-                    o.snap_bmp(&p);
+                let saved = self
+                    .overlay
+                    .as_ref()
+                    .is_some_and(|o| o.snap_bmp(self.snap_path.as_deref().unwrap_or_default()));
+                if !saved {
+                    crate::util::log_error("widget snapshot failed");
                 }
-                std::process::exit(0);
+                // Let the normal message-loop teardown remove the tray icon and
+                // release GDI resources, instead of leaving a ghost tray icon.
+                unsafe {
+                    PostQuitMessage(if saved { 0 } else { 1 });
+                }
+                self.snap_path = None;
             }
         }
     }
@@ -181,13 +181,18 @@ impl App {
     }
 
     fn sample(&mut self) {
-        let now = Instant::now();
         self.adapters = net::list_adapters();
+        self.sample_valid = false;
         if self.paused {
-            self.last_sample = now;
             return;
         }
-        let Some(row) = self.pick_adapter() else {
+        let Some(row) = net::pick_adapter(
+            &self.adapters,
+            self.cfg.adapter_luid,
+            net::best_route_index(),
+        ) else {
+            self.selected_name = String::from("No active adapter");
+            self.sampling.reset();
             return;
         };
         self.selected_name = if row.alias.is_empty() {
@@ -195,54 +200,19 @@ impl App {
         } else {
             row.alias.clone()
         };
-        let dt = now.duration_since(self.last_sample).as_secs_f64();
-        self.last_sample = now;
-        let (i, o) = (row.in_octets, row.out_octets);
-        if self.reset_pending {
-            self.reset_pending = false;
-            self.prev_in = i;
-            self.prev_out = o;
-            return;
-        }
-        if dt >= 0.05 && dt <= 30.0 {
-            if i >= self.prev_in && o >= self.prev_out {
-                let di = i - self.prev_in;
-                let dout = o - self.prev_out;
-                self.tot_in += di;
-                self.tot_out += dout;
-                self.rate_down = di as f64 / dt;
-                self.rate_up = dout as f64 / dt;
-            } else {
-                self.rate_down = 0.0;
-                self.rate_up = 0.0;
-            }
-        }
-        self.prev_in = i;
-        self.prev_out = o;
-    }
-
-    fn pick_adapter(&self) -> Option<AdapterRow> {
-        if let Some(luid) = self.cfg.adapter_luid
-            && let Some(r) = self.adapters.iter().find(|r| r.luid == luid)
-        {
-            return Some(r.clone());
-        }
-        if let Some(idx) = net::best_route_index()
-            && let Some(r) = self.adapters.iter().find(|r| r.index == idx)
-        {
-            return Some(r.clone());
-        }
-        self.adapters
-            .iter()
-            .filter(|r| r.up && r.is_physical_like())
-            .max_by_key(|r| r.link_bps)
-            .cloned()
+        self.sample_valid = self.sampling.update(
+            row.luid,
+            row.in_octets,
+            row.out_octets,
+            Instant::now(),
+            self.cfg.interval_clamped(),
+        );
     }
 
     fn render(&mut self) {
         if let Some(o) = &mut self.overlay {
-            let d = format::format_rate(self.rate_down, self.cfg.units, self.cfg.decimals);
-            let u = format::format_rate(self.rate_up, self.cfg.units, self.cfg.decimals);
+            let d = format::format_rate(self.sampling.down, self.cfg.units, self.cfg.decimals);
+            let u = format::format_rate(self.sampling.up, self.cfg.units, self.cfg.decimals);
             if self.last_text.as_ref() == Some(&(d.clone(), u.clone())) {
                 return;
             }
@@ -251,17 +221,17 @@ impl App {
         }
     }
 
-    fn update_tip(&self) {
+    fn update_tip(&mut self) {
         let tip = if self.paused {
             format!("NetSpeed - paused\n{}", self.selected_name)
         } else {
             format!(
                 "NetSpeed - {}\nD: {}  U: {}\nSession D: {}  U: {}",
                 self.selected_name,
-                format::format_rate(self.rate_down, self.cfg.units, self.cfg.decimals),
-                format::format_rate(self.rate_up, self.cfg.units, self.cfg.decimals),
-                format::format_bytes(self.tot_in),
-                format::format_bytes(self.tot_out)
+                format::format_rate(self.sampling.down, self.cfg.units, self.cfg.decimals),
+                format::format_rate(self.sampling.up, self.cfg.units, self.cfg.decimals),
+                format::format_bytes(self.sampling.total_down),
+                format::format_bytes(self.sampling.total_up)
             )
         };
         self.tray.update_tip(&tip);
@@ -270,6 +240,9 @@ impl App {
     fn logging_tick(&mut self) {
         if !self.cfg.logging {
             self.logger = None;
+            return;
+        }
+        if self.paused || !self.sample_valid {
             return;
         }
         let now = Instant::now();
@@ -282,13 +255,13 @@ impl App {
             self.logger = Some(Logger::new(self.cfg.log_retention_days));
         }
         if let Some(lg) = &mut self.logger {
-            lg.log_sample(&self.selected_name, self.rate_down, self.rate_up);
+            lg.log_sample(&self.selected_name, self.sampling.down, self.sampling.up);
         }
     }
 
     fn reset_sampling(&mut self) {
-        self.reset_pending = true;
-        self.last_sample = Instant::now();
+        self.sampling.reset();
+        self.sample_valid = false;
     }
 
     pub fn toggle_show(&mut self) {
@@ -299,7 +272,8 @@ impl App {
         }
     }
 
-    pub fn show_menu(&self) -> u32 {
+    pub fn show_menu(&mut self) -> u32 {
+        self.refresh_autostart();
         tray::show_menu(self.tray.hwnd, &self.cfg, &self.adapters, self.paused)
     }
 
@@ -312,16 +286,40 @@ impl App {
             tray::CMD_SHOW => self.toggle_show(),
             tray::CMD_EXIT => return false,
             tray::CMD_OPEN_LOGS => {
-                crate::util::open_path(&crate::util::data_dir().join("logs"));
+                let path = crate::util::data_dir().join("logs");
+                if let Err(e) = std::fs::create_dir_all(&path) {
+                    crate::util::log_error(&format!("cannot create logs folder: {e}"));
+                } else {
+                    crate::util::open_path(&path);
+                }
             }
             tray::CMD_LOGGING => {
                 self.cfg.logging = !self.cfg.logging;
                 self.cfg.save();
             }
             tray::CMD_AUTOSTART => {
-                self.cfg.autostart = !self.cfg.autostart;
-                set_autostart(self.cfg.autostart);
-                self.cfg.save();
+                let enabled = !self.cfg.autostart;
+                match startup::set_enabled(enabled) {
+                    Ok(()) => {
+                        self.cfg.autostart = enabled;
+                        self.cfg.save();
+                    }
+                    Err(e) => {
+                        let message = format!(
+                            "Could not change Start with Windows: {e}\n\nCheck your Windows startup settings and try again."
+                        );
+                        crate::util::log_error(&message);
+                        let text = crate::util::wide(&message);
+                        unsafe {
+                            MessageBoxW(
+                                Some(self.tray.hwnd),
+                                PCWSTR(text.as_ptr()),
+                                w!("NetSpeed"),
+                                MB_OK | MB_ICONERROR,
+                            );
+                        }
+                    }
+                }
             }
             tray::CMD_INTERVAL_250 => self.set_interval(250),
             tray::CMD_INTERVAL_500 => self.set_interval(500),
@@ -361,8 +359,9 @@ impl App {
     fn set_interval(&mut self, ms: u32) {
         self.cfg.interval_ms = ms;
         self.cfg.save();
+        // Only the schedule changes. Keep the counters and timestamp so the
+        // first tick at the new interval still counts all intervening traffic.
         self.reset_timer();
-        self.reset_sampling();
     }
 
     fn set_units(&mut self, u: Units) {
@@ -371,7 +370,7 @@ impl App {
     }
 
     fn set_decimals(&mut self, d: u32) {
-        self.cfg.decimals = d.min(3);
+        self.cfg.decimals = d.min(2);
         self.cfg.save();
     }
 
@@ -393,40 +392,11 @@ impl App {
     }
 
     pub fn shutdown(&mut self) {
+        unsafe {
+            let _ = KillTimer(Some(self.tray.hwnd), crate::TIMER_ID);
+        }
         self.tray.shutdown();
         self.overlay = None;
-    }
-}
-
-fn set_autostart(enable: bool) {
-    unsafe {
-        let sub = crate::util::wide(RUN_KEY);
-        let mut hk = HKEY::default();
-        let rc = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(sub.as_ptr()),
-            Some(0),
-            KEY_SET_VALUE,
-            &mut hk,
-        );
-        if rc != ERROR_SUCCESS {
-            crate::util::log_error("autostart: cannot open Run key for writing");
-            return;
-        }
-        let name = crate::util::wide(RUN_VALUE);
-        if enable {
-            let exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let val = crate::util::wide(&format!("\"{exe}\""));
-            let mut bytes = Vec::with_capacity(val.len() * 2);
-            for u in &val {
-                bytes.extend_from_slice(&u.to_le_bytes());
-            }
-            let _ = RegSetValueExW(hk, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&bytes));
-        } else {
-            let _ = RegDeleteValueW(hk, PCWSTR(name.as_ptr()));
-        }
-        let _ = RegCloseKey(hk);
+        self.logger = None;
     }
 }

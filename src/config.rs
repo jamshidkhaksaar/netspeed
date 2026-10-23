@@ -53,9 +53,15 @@ impl Config {
 
     pub fn load() -> Self {
         match std::fs::read_to_string(Self::path()) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Ok(s) => Self::from_json(&s),
             Err(_) => Self::default(),
         }
+    }
+
+    fn from_json(text: &str) -> Self {
+        let mut cfg = serde_json::from_str::<Self>(text).unwrap_or_default();
+        cfg.decimals = cfg.decimals.min(2);
+        cfg
     }
 
     pub fn save(&self) {
@@ -66,5 +72,47 @@ impl Config {
 
     pub fn interval_clamped(&self) -> u32 {
         self.interval_ms.clamp(250, 60_000)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_precision_is_clamped_without_profile_access() {
+        for decimals in [3, 1000, u32::MAX] {
+            let cfg = Config::from_json(&format!(r#"{{"decimals":{decimals}}}"#));
+            assert_eq!(cfg.decimals, 2);
+        }
+    }
+
+    #[test]
+    fn supported_precision_is_preserved() {
+        for decimals in 0..=2 {
+            let cfg = Config::from_json(&format!(r#"{{"decimals":{decimals}}}"#));
+            assert_eq!(cfg.decimals, decimals);
+        }
+    }
+
+    #[test]
+    fn precision_validation_preserves_other_settings() {
+        let cfg = Config::from_json(
+            r#"{"decimals":1000,"interval_ms":5000,"adapter_luid":18446744073709551615,"show":false,"autostart":true,"units":"bits"}"#,
+        );
+        assert_eq!(cfg.decimals, 2);
+        assert_eq!(cfg.interval_ms, 5000);
+        assert_eq!(cfg.adapter_luid, Some(u64::MAX));
+        assert_eq!(cfg.units, Units::Bits);
+        assert!(!cfg.show);
+        assert!(cfg.autostart);
+    }
+
+    #[test]
+    fn missing_or_malformed_values_still_use_defaults() {
+        for text in ["{}", "not json", r#"{"decimals":-1}"#] {
+            let cfg = Config::from_json(text);
+            assert_eq!(cfg.decimals, Config::default().decimals);
+        }
     }
 }

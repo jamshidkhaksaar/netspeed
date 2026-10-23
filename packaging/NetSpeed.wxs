@@ -1,0 +1,111 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="NetSpeed"
+           Manufacturer="NetSpeed"
+           Version="$(var.Version)"
+           ProductCode="$(var.ProductCode)"
+           UpgradeCode="6EA9AA8B-FA18-5B5F-A16C-43B4F9E1D770"
+           Language="1033"
+           Codepage="1252"
+           Scope="perUser"
+           InstallerVersion="500"
+           Compressed="yes">
+    <SummaryInformation Description="NetSpeed for Windows 11 x64 (per-user)"
+                        Keywords="NetSpeed, network speed, Windows 11"
+                        Manufacturer="NetSpeed" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Remove the old MSI inside the transaction; failure restores it. -->
+    <MajorUpgrade AllowDowngrades="no"
+                  AllowSameVersionUpgrades="no"
+                  DowngradeErrorMessage="A newer version of NetSpeed is already installed. Uninstall it before installing an older version."
+                  Schedule="afterInstallInitialize" />
+
+    <!-- MSI VersionNT/WindowsBuild can report compatibility versions. The
+         64-bit CurrentBuildNumber registry value is REG_SZ, not a DWORD.
+         WindowsBuildNumber is a Burn variable, not an MSI property. -->
+    <Property Id="NETSPEED_OS_BUILD" Secure="yes">
+      <RegistrySearch Id="NetSpeedCurrentBuild"
+                      Root="HKLM"
+                      Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber"
+                      Type="raw"
+                      Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR (Msix64 AND MsiNTProductType = 1 AND NETSPEED_OS_BUILD &gt;= 22000)"
+            Message="NetSpeed requires Windows 11 on an x64 PC (build 22000 or later). Windows 10, Windows Server and ARM64 are not supported by this installer." />
+    <Launch Condition="Installed OR NOT ALLUSERS"
+            Message="This NetSpeed package installs only for the current user. Do not specify ALLUSERS." />
+
+    <!-- Never close/restart running applications or reboot automatically.
+         A user must exit NetSpeed themselves before replacing an in-use EXE. -->
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="ARPPRODUCTICON" Value="NetSpeedIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/jamshidkhaksaar/netspeed" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/jamshidkhaksaar/netspeed/issues" />
+    <Property Id="ARPCOMMENTS" Value="Native taskbar network-speed widget for Windows 11 x64. Installed for the current user only." />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="both" />
+    <Icon Id="NetSpeedIcon.ico" SourceFile="$(var.IconFile)" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="NetSpeedProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="NetSpeed">
+          <!-- HKCU key paths make user-profile components safe for MSI
+               servicing. Component GUIDs must stay fixed for this layout. -->
+          <Component Id="NetSpeedExecutable" Guid="A2F7B5EB-AEED-55EC-B961-916D21B58B39" Bitness="always64">
+            <File Id="NetSpeedExe" Name="netspeed.exe" Source="$(var.AppExe)" />
+            <RegistryValue Root="HKCU" Key="Software\NetSpeed\Installer" Name="Executable"
+                           Type="integer" Value="1" KeyPath="yes" />
+            <RemoveFolder Id="RemoveNetSpeedInstallFolder" On="uninstall" />
+          </Component>
+          <Component Id="NetSpeedLicense" Guid="86CD28B8-D867-5CC3-8699-763F4F7BB786" Bitness="always64">
+            <File Id="NetSpeedLicenseFile" Name="LICENSE.txt" Source="$(var.LicenseFile)" />
+            <RegistryValue Root="HKCU" Key="Software\NetSpeed\Installer" Name="License"
+                           Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="NetSpeedInstalledIcon" Guid="627D726B-A94B-5C30-A25D-8D5D453537E8" Bitness="always64">
+            <File Id="NetSpeedIconFile" Name="netspeed.ico" Source="$(var.IconFile)" />
+            <RegistryValue Root="HKCU" Key="Software\NetSpeed\Installer" Name="Icon"
+                           Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="NetSpeedThirdPartyNotices" Guid="BE6A9963-947A-5E21-BF5B-1B891AA8F577" Bitness="always64">
+            <File Id="NetSpeedNoticesFile" Name="THIRD-PARTY-NOTICES.txt" Source="$(var.NoticesFile)" />
+            <RegistryValue Root="HKCU" Key="Software\NetSpeed\Installer" Name="ThirdPartyNotices"
+                           Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="NetSpeedStartMenuFolder" Name="NetSpeed">
+        <Component Id="NetSpeedStartMenuShortcut" Guid="C5439BE2-54FD-5E3F-8C37-E6C61B9C9921" Bitness="always64">
+          <Shortcut Id="NetSpeedStartMenuShortcutLink" Name="NetSpeed"
+                    Description="Live network speed on your Windows 11 taskbar"
+                    Target="[#NetSpeedExe]" WorkingDirectory="INSTALLFOLDER"
+                    Icon="NetSpeedIcon.ico" IconIndex="0" Advertise="no" />
+          <RegistryValue Root="HKCU" Key="Software\NetSpeed\Installer" Name="StartMenuShortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+          <RemoveFolder Id="RemoveNetSpeedStartMenuFolder" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="NetSpeedFeature" Title="NetSpeed" Level="1" AllowAdvertise="no" AllowAbsent="no">
+      <ComponentRef Id="NetSpeedExecutable" />
+      <ComponentRef Id="NetSpeedLicense" />
+      <ComponentRef Id="NetSpeedInstalledIcon" />
+      <ComponentRef Id="NetSpeedThirdPartyNotices" />
+      <ComponentRef Id="NetSpeedStartMenuShortcut" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_Minimal" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="Start NetSpeed from the Start menu. Setup does not launch it or change Start with Windows. Existing preferences and logs are kept." />
+    <!-- No launch custom action, startup registration, or user-data cleanup. -->
+  </Package>
+</Wix>

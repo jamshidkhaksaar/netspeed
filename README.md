@@ -1,67 +1,83 @@
+<p align="center">
+  <img src="assets/netspeed.png" width="88" height="88" alt="NetSpeed icon">
+</p>
 <h1 align="center">netspeed</h1>
 
 <p align="center">
-  <em>Live network speed, right on your Windows 11 taskbar. Native Rust. One tiny exe. No runtime, no installer, no nonsense.</em>
+  Live download and upload speeds on your Windows 11 taskbar. Native Rust with Direct2D and DirectWrite.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white&style=flat-square" alt="Windows 11">
+  <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078D4?logo=windows11&logoColor=white&style=flat-square" alt="Windows 11 x64">
   <img src="https://img.shields.io/badge/built%20with-Rust-000000?logo=rust&logoColor=white&style=flat-square" alt="Rust">
-  <img src="https://img.shields.io/badge/version-1.0.0-brightgreen?style=flat-square" alt="v1.0.0">
+  <img src="https://img.shields.io/badge/version-1.0.1-brightgreen?style=flat-square" alt="v1.0.1">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT">
-  <img src="https://img.shields.io/badge/binary-310%20KB-lightgrey?style=flat-square" alt="310 KB">
 </p>
 
 <p align="center">
-  <img src="docs/hero.png" width="900" alt="netspeed sitting on the Windows 11 taskbar next to the tray">
+  <img src="docs/hero.png" width="900" alt="NetSpeed network speed widget beside the Windows taskbar tray">
 </p>
 
----
+## Download and install
 
-**netspeed** renders two compact lines onto the taskbar — download on top, upload below — with per-pixel transparency and antialiased text, drawn with Direct2D + DirectWrite. It works on all four taskbar edges, follows your DPI (Per-Monitor V2), respects your light/dark theme, and never steals focus or clicks.
+Requires Windows 11 x64. Choose a download from [v1.0.1](https://github.com/jamshidkhaksaar/netspeed/releases/tag/v1.0.1):
+
+| Download | Purpose |
+|---|---|
+| [NetSpeed-1.0.1-Setup.exe](https://github.com/jamshidkhaksaar/netspeed/releases/download/v1.0.1/NetSpeed-1.0.1-Setup.exe) | Native setup wizard with the MSI included. |
+| [NetSpeed-1.0.1-x64.msi](https://github.com/jamshidkhaksaar/netspeed/releases/download/v1.0.1/NetSpeed-1.0.1-x64.msi) | Windows Installer package for direct installation or deployment. |
+| [netspeed.exe](https://github.com/jamshidkhaksaar/netspeed/releases/download/v1.0.1/netspeed.exe) | Portable application. Put it in a folder of your choice and run it. |
+| [SHA256SUMS.txt](https://github.com/jamshidkhaksaar/netspeed/releases/download/v1.0.1/SHA256SUMS.txt) | Checksums for the release downloads. |
+
+Exit any running NetSpeed instance from its tray menu before upgrading or switching between portable and installed copies.
+
+The installers install for the current user in `%LOCALAPPDATA%\Programs\NetSpeed` and create a Start menu shortcut. They do not enable autostart by default. Start NetSpeed from the Start menu, then use **Start with Windows** in its tray menu if you want it at logon. If a startup entry already points to a portable copy, turn that option off and back on from the installed instance to update the path.
+
+Windows may put the tray icon in the overflow menu. Open the tray overflow and drag the NetSpeed icon onto the taskbar.
+
+The downloads are unsigned. Windows may display a SmartScreen or unknown-publisher warning. Use the release files from this repository and verify their checksums:
+
+```powershell
+Get-FileHash .\NetSpeed-1.0.1-Setup.exe -Algorithm SHA256
+```
+
+To uninstall an installed copy, use Windows **Installed apps**. Turn off **Start with Windows** in NetSpeed first if you enabled it. Uninstallation keeps your configuration and CSV logs.
 
 ## Features
 
-- **Live ↓ / ↑ speeds** on the taskbar, updating every 250 ms – 5 s (your choice)
-- **Smart adapter picking** — follows the OS best route (VPNs included), picks the busiest NIC automatically, or pin any adapter
-- **Units & precision** — bits/s, SI bytes/s or binary (KiB/s); 0–2 decimals
-- **CSV logging** — optional per-sample history with configurable retention
-- **All 4 taskbar edges** — bottom, top, left, right, with proper text rotation
-- **Light & dark theme** aware, Per-Monitor V2 DPI aware
-- **Click-through & silent** — never overlaps or blocks taskbar clicks, no focus stealing
-- **Single 310 KB exe**, no dependencies, no admin required
-- **Tray menu** for everything — pause, interval, units, adapter, autostart, logs
+- Download and upload rates, with update intervals from 250 ms to 5 seconds in the tray menu.
+- Automatic selection of an active best-route adapter, including VPN adapters, or manual adapter selection.
+- Bits/s, SI bytes/s and binary bytes/s, with precision limited to 0, 1 or 2 decimal places.
+- Session traffic totals in the tray tooltip.
+- Optional daily CSV files with configurable retention.
+- Per-Monitor V2 DPI awareness and Windows system light/dark theme colors.
+- A click-through taskbar overlay that does not take keyboard focus.
+- An original multi-resolution icon for the application, tray and installed shortcuts.
+- Per-user MSI and EXE installers, or a portable executable without an application runtime dependency.
+
+Automatic best-route discovery currently uses IPv4. For an IPv6-only connection or a different IPv6 VPN route, select the required adapter manually. On systems with many virtual/filter interfaces, adapters beyond the tray menu's first 20 entries can be pinned through `adapter_luid` in the configuration.
 
 ## Screenshot
 
 <p align="center">
-  <img src="docs/widget-zoom.png" width="480" alt="netspeed widget close-up — download and upload rates">
+  <img src="docs/widget-zoom.png" width="480" alt="Close-up of the taskbar download and upload rates">
 </p>
-
-## Install
-
-1. Grab **`netspeed.exe`** from the [latest release](https://github.com/jamshidkhaksaar/netspeed/releases/latest)
-2. Put it in a folder of your choice (e.g. `C:\Tools\NetSpeed\`) and run it
-3. Windows 11 hides new tray icons — click the **`^`** chevron next to the clock and drag the netspeed icon onto the taskbar
-4. Right-click the tray icon → **Start with Windows** if you want it always on
-
-> The exe is unsigned, so SmartScreen may warn you the first time: **More info → Run anyway**.
 
 ## Settings
 
-Everything lives in the tray icon's right-click menu:
+Right-click the tray icon to change settings:
 
 | Menu item | Options |
 |---|---|
 | Update interval | 250 ms / 500 ms / 1 s / 2 s / 5 s |
-| Units | bits/s · bytes/s SI · bytes/s binary |
-| Decimals | 0 · 1 · 2 |
-| Adapter | Automatic (best route) or any adapter |
-| Save samples to CSV | on/off, daily files with retention |
-| Start with Windows | on/off |
-| Pause / Show widget / Open logs folder / Exit | — |
+| Units | bits/s / bytes/s SI / bytes/s binary |
+| Decimals | 0 / 1 / 2 |
+| Adapter | Automatic or a listed adapter |
+| Save samples to CSV | Daily files with retention |
+| Start with Windows | Enable or disable the current executable's startup entry |
+| Other commands | Pause, show widget, open logs folder, exit |
 
-For a custom interval (anything from 250 ms to 60 s), edit `%APPDATA%\NetSpeed\config.json`:
+Configuration lives in `%APPDATA%\NetSpeed\config.json`; CSV logs live in `%APPDATA%\NetSpeed\logs`. For a custom update interval from 250 ms to 60 seconds, exit the app, edit the configuration, and restart it:
 
 ```json
 {
@@ -72,51 +88,68 @@ For a custom interval (anything from 250 ms to 60 s), edit `%APPDATA%\NetSpeed\c
   "logging": false,
   "log_retention_days": 30,
   "autostart": false,
-  "show": true,
-  "font_size": 12.0
+  "show": true
 }
 ```
 
-Config lives in `%APPDATA%\NetSpeed\config.json`, CSV logs in `%APPDATA%\NetSpeed\logs\`.
-
-## How it works
-
-- The widget is a **layered child window of `Shell_TrayWnd`** — it lives inside the taskbar itself and is repositioned automatically when the taskbar moves, resizes or restarts
-- Pixels are composed with **Direct2D** into a premultiplied-alpha DIB and pushed with `UpdateLayeredWindow`; text is rendered with **DirectWrite** using grayscale antialiasing
-- Speeds come from the OS: **`GetIfTable2`** octet counters sampled on a timer, with the interface chosen by **`GetBestInterface`** (so VPN routing is honored) or manual pinning
-- Zero hooks, zero injection, no admin rights. Manifest embeds Per-Monitor-V2 DPI awareness (required for layered child windows — see `build.rs`)
+Windows startup registration is the source of truth for autostart. Editing the `autostart` field alone does not create or remove a startup entry.
 
 ## Build from source
 
-Requires [Rust](https://rustup.rs) (edition 2024, MSVC toolchain) and Visual Studio Build Tools with the Windows SDK.
+Use a current Rust MSVC toolchain, Visual Studio Build Tools and the Windows SDK. The resource compiler embeds the application icon and version information. [build.rs](<build.rs>) discovers `rc.exe` from the SDK, `PATH`, or an explicit `NETSPEED_RC`/`RC` environment variable.
 
 ```powershell
 git clone https://github.com/jamshidkhaksaar/netspeed.git
 cd netspeed
-cargo build --release
-# binary at target\release\netspeed.exe
+cargo test --locked
+cargo build --release --locked
+# Application: target\release\netspeed.exe
 ```
 
-Development helpers:
+The icon source is [assets/netspeed.svg](<assets/netspeed.svg>). The committed PNG and ICO assets can be regenerated with [scripts/generate_icon.py](<scripts/generate_icon.py>) and Python with Pillow.
+
+For MSI and EXE packaging, use PowerShell 7.2 or later and the pinned WiX toolchain described in the [packaging guide](<packaging/README.md>). Packaging needs .NET 8 on the build machine; the installed app and native setup wizard do not require .NET.
 
 ```powershell
-netspeed.exe --debug-anchor   # dump taskbar/anchor window geometry
-netspeed.exe --debug-net      # dump adapters and live rates
-netspeed.exe --snap out.bmp   # save the widget's own pixels (with alpha) to a BMP
+$env:DOTNET_ROLL_FORWARD = 'Major'
+dotnet tool install wix --version 4.0.6 --tool-path .tools\wix
+& .\.tools\wix\wix.exe extension add WixToolset.UI.wixext/4.0.6
+& .\.tools\wix\wix.exe extension add WixToolset.Bal.wixext/4.0.6
+cargo build --release --locked --target-dir target\release-package
+& .\packaging\build-installers.ps1 -Version 1.0.1 -AppExe (Resolve-Path .\target\release-package\release\netspeed.exe).Path
+& .\packaging\validate-installers.ps1 -Version 1.0.1 -OutputDir .\dist\v1.0.1
 ```
 
-## FAQ
+The [isolated installer-script tests](<tests/install.Tests.ps1>) use temporary files and mocked registry, shell and launch operations:
 
-**The tray icon is missing.** Windows 11 hides new tray icons in the overflow (`^`). Drag it out, or enable it in *Settings → Personalization → Taskbar → Other system tray icons*.
+```powershell
+pwsh -NoProfile -File .\tests\install.Tests.ps1
+```
 
-**Speeds differ from my VPN client.** By default netspeed follows the OS best route, so with a full-tunnel VPN you'll see the VPN adapter's throughput — same traffic, slightly different numbers than the physical NIC due to encapsulation.
+The optional [PowerShell installer](<install.ps1>) is also available for a locally built executable. Its default behavior explicitly enables per-user autostart; use `-NoAutostart` to preserve startup settings and `-NoLaunch` to avoid launching the app.
 
-**Does it work on Windows 10?** No — netspeed targets Windows 11 only.
+```powershell
+.\install.ps1 -NoAutostart -NoLaunch
+```
 
-**Antivirus / SmartScreen warning?** The binary is unsigned. Build it yourself from source if you prefer.
+Development diagnostics:
+
+```powershell
+netspeed.exe --debug-anchor
+netspeed.exe --debug-net
+netspeed.exe --snap out.bmp
+```
+
+## How it works
+
+NetSpeed creates a layered child window of `Shell_TrayWnd`. Direct2D renders into a premultiplied-alpha bitmap, DirectWrite draws the text, and `UpdateLayeredWindow` updates the overlay. The widget follows compatible taskbar geometry, DPI and theme changes.
+
+`GetIfTable2` provides octet counters. The sampler calculates rates from actual elapsed time and tracks the adapter LUID, avoiding invalid deltas after route changes or counter resets. Interval-only changes preserve the sampling baseline. Real suspend/resume events clear it; ordinary battery and A/C notifications do not.
+
+See [CHANGELOG.md](<CHANGELOG.md>) for release changes.
 
 ## License
 
-[MIT](LICENSE) © 2026 Jamshid Khaksaar
+[MIT](<LICENSE>), copyright 2026 Jamshid Khaksaar.
 
-Inspired by the ideas of [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) and [NetSpeedTray](https://github.com/erez-c137/NetSpeedTray). This is an original, from-scratch implementation — no code shared with those projects.
+Inspired by [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) and [NetSpeedTray](https://github.com/erez-c137/NetSpeedTray). NetSpeed is an original implementation, not a fork of either project.
